@@ -27,6 +27,11 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: true
+
+      - name: Accept all Android licenses
+        run: yes | sdkmanager --licenses || true
 
       - name: Install Node dependencies
         run: npm install
