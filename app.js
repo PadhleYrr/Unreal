@@ -7,7 +7,14 @@
 
 // ── Config ────────────────────────────────────────────────────────────────
 // Keys are read from config.js (UNREAL_CONFIG). Fill that file in — no server needed.
-let GROQ_API_KEY  = (typeof UNREAL_CONFIG !== "undefined") ? UNREAL_CONFIG.GROQ_API_KEY : "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";
+// getGroqKey() reads lazily at call-time so script load order never matters
+function getGroqKey() {
+  return (typeof UNREAL_CONFIG !== "undefined" && UNREAL_CONFIG.GROQ_API_KEY &&
+          UNREAL_CONFIG.GROQ_API_KEY.trim() !== "" &&
+          UNREAL_CONFIG.GROQ_API_KEY !== "your_groq_api_key_here")
+    ? UNREAL_CONFIG.GROQ_API_KEY.trim()
+    : "";
+}
 const GROQ_MODEL  = "llama-3.3-70b-versatile";
 const MCP_BASE    = (typeof UNREAL_CONFIG !== "undefined" && UNREAL_CONFIG.RENDER_NODE_URL)
   ? UNREAL_CONFIG.RENDER_NODE_URL
@@ -56,7 +63,7 @@ function log(msg, type = "info") {
 
 // ── Validate config ───────────────────────────────────────────────────────
 function checkConfig() {
-  if (!GROQ_API_KEY || GROQ_API_KEY === "your_groq_api_key_here" || GROQ_API_KEY.trim() === "") {
+  if (!getGroqKey()) {
     log("⚠ Open config.js and paste your GROQ_API_KEY to enable voice AI.", "warn");
   } else {
     log("Groq ready ✓", "info");
@@ -242,7 +249,8 @@ Rules:
 Greeting: If this is the first message, start with "UNREAL online. What do you need, boss?"`;
 
 async function askGroq(userText) {
-  if (!GROQ_API_KEY || GROQ_API_KEY === "your_groq_api_key_here") {
+  const GROQ_API_KEY = getGroqKey();
+  if (!GROQ_API_KEY) {
     speak("No API key configured, boss. Add GROQ_API_KEY to config dot js.");
     return;
   }
