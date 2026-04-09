@@ -1,50 +1,47 @@
 /**
- * UNREAL — app.js
- * Vision : MediaPipe FaceMesh + Pose + Hands + face-api.js
- * Voice  : Web Speech API (STT) + Gemini API (LLM) + speechSynthesis (TTS)
- * Zero external voice services. Everything runs in the browser.
+ * UNREAL — app.js  (fully rebuilt)
+ * FIX 1: Camera uses video-only — audio:false — so mic stays free for Web Speech API
+ * FIX 2: Real action execution engine — opens apps, plays music, searches, etc.
+ * FIX 3: Groq key read lazily via getGroqKey() — no parse-time race
+ * FIX 4: Voice + camera work simultaneously
  */
 
-// ── Config ────────────────────────────────────────────────────────────────
-// Keys are read from config.js (UNREAL_CONFIG). Fill that file in — no server needed.
-// getGroqKey() reads lazily at call-time so script load order never matters
+// ── Config (lazy read — no parse-time race) ───────────────────────────────
 function getGroqKey() {
-  return (typeof UNREAL_CONFIG !== "undefined" && UNREAL_CONFIG.GROQ_API_KEY &&
-          UNREAL_CONFIG.GROQ_API_KEY.trim() !== "" &&
-          UNREAL_CONFIG.GROQ_API_KEY !== "your_groq_api_key_here")
-    ? UNREAL_CONFIG.GROQ_API_KEY.trim()
-    : "";
+  if (typeof UNREAL_CONFIG !== "undefined" && UNREAL_CONFIG.GROQ_API_KEY &&
+      UNREAL_CONFIG.GROQ_API_KEY.trim() !== "" &&
+      UNREAL_CONFIG.GROQ_API_KEY !== "your_groq_api_key_here")
+    return UNREAL_CONFIG.GROQ_API_KEY.trim();
+  return "";
 }
-const GROQ_MODEL  = "llama-3.3-70b-versatile";
-const MCP_BASE    = (typeof UNREAL_CONFIG !== "undefined" && UNREAL_CONFIG.RENDER_NODE_URL)
+const GROQ_MODEL = "llama-3.3-70b-versatile";
+const MCP_BASE = (typeof UNREAL_CONFIG !== "undefined" && UNREAL_CONFIG.RENDER_NODE_URL)
   ? UNREAL_CONFIG.RENDER_NODE_URL
-  : (window.location.hostname === "localhost" ? "http://localhost:3000" : "");
+  : (typeof location !== "undefined" && location.hostname === "localhost" ? "http://localhost:3000" : "");
 
 // ── State ─────────────────────────────────────────────────────────────────
 const state = {
-  modules:   { face: false, recog: false, emotion: false, agegend: false, pose: false, hands: false },
-  paused:    false,
-  voiceOn:   false,
+  modules: { face: false, recog: false, emotion: false, agegend: false, pose: false, hands: false },
+  paused: false,
+  voiceOn: false,
   modelsLoaded: false,
   knownFaces: [],
-  snapshots:  [],
+  snapshots: [],
   lastGesture: null,
   gestureDebounce: 0,
-  chatHistory: [],   // { role: "user"|"model", parts: [{text}] }
+  chatHistory: [],
   speaking: false,
 };
 
-// ── DOM ───────────────────────────────────────────────────────────────────
+// ── DOM refs ──────────────────────────────────────────────────────────────
 const video    = document.getElementById("videoEl");
 const canvas   = document.getElementById("canvasEl");
 const ctx      = canvas.getContext("2d");
-
-const dotFace   = document.getElementById("dot-face");
-const dotPose   = document.getElementById("dot-pose");
-const dotHands  = document.getElementById("dot-hands");
-const dotVoice  = document.getElementById("dot-voice");
-const dotModels = document.getElementById("dot-models");
-
+const dotFace  = document.getElementById("dot-face");
+const dotPose  = document.getElementById("dot-pose");
+const dotHands = document.getElementById("dot-hands");
+const dotVoice = document.getElementById("dot-voice");
+const dotModels= document.getElementById("dot-models");
 const emotionChip = document.getElementById("emotion-chip");
 const gestureChip = document.getElementById("gesture-chip");
 const poseChip    = document.getElementById("pose-chip");
@@ -58,22 +55,41 @@ function log(msg, type = "info") {
   div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
   el.appendChild(div);
   el.scrollTop = el.scrollHeight;
-  if (el.children.length > 120) el.removeChild(el.firstChild);
+  if (el.children.length > 200) el.removeChild(el.firstChild);
 }
 
-// ── Validate config ───────────────────────────────────────────────────────
+// ── Chat display ──────────────────────────────────────────────────────────
+function addChatBubble(text, role) {
+  const feed = document.getElementById("chat-feed");
+  if (!feed) return;
+  const row = document.createElement("div");
+  row.className = `chat-row ${role}`;
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+  bubble.textContent = text;
+  row.appendChild(bubble);
+  feed.appendChild(row);
+  feed.scrollTop = feed.scrollHeight;
+  if (feed.children.length > 60) feed.removeChild(feed.firstChild);
+}
+
+// ── Config check ──────────────────────────────────────────────────────────
 function checkConfig() {
   if (!getGroqKey()) {
-    log("⚠ Open config.js and paste your GROQ_API_KEY to enable voice AI.", "warn");
+    log("⚠ Open config.js and paste your GROQ_API_KEY to enable AI.", "warn");
   } else {
-    log("Groq ready ✓", "info");
+    log("Groq AI ready ✓", "info");
   }
 }
 
-// ── Camera ────────────────────────────────────────────────────────────────
+// ── Camera — VIDEO ONLY, no audio (keeps mic free for Speech API) ─────────
 async function startCamera() {
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: true });
+    // CRITICAL FIX: audio: false — so the browser mic stays available for Web Speech API
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    });
     video.srcObject = stream;
     video.onloadedmetadata = () => {
       canvas.width  = video.videoWidth;
@@ -85,7 +101,7 @@ async function startCamera() {
   }
 }
 
-// ── face-api.js models ────────────────────────────────────────────────────
+// ── face-api models ───────────────────────────────────────────────────────
 const MODEL_URL = "https://vladmandic.github.io/face-api/model";
 
 async function loadModels() {
@@ -108,13 +124,12 @@ async function loadModels() {
   }
 }
 
-// ── Saved Faces ───────────────────────────────────────────────────────────
 async function loadSavedFaces() {
   try {
-    const res  = await fetch("/api/faces");
+    const res  = await fetch(MCP_BASE + "/api/faces");
     const data = await res.json();
     state.knownFaces = data.map(f => ({
-      name:       f.name,
+      name: f.name,
       descriptor: new Float32Array(Object.values(f.descriptor)),
     }));
     log(`Loaded ${state.knownFaces.length} known face(s).`);
@@ -128,12 +143,10 @@ function toggleModule(mod) {
   state.modules[mod] = !state.modules[mod];
   const btn = document.getElementById(`btn-${mod}`);
   if (btn) btn.classList.toggle("active", state.modules[mod]);
-
   if (["face","recog","emotion","agegend"].includes(mod))
     dotFace.classList.toggle("on", state.modules.face || state.modules.recog || state.modules.emotion || state.modules.agegend);
-  if (mod === "pose")  dotPose.classList.toggle("on",  state.modules.pose);
+  if (mod === "pose")  dotPose.classList.toggle("on", state.modules.pose);
   if (mod === "hands") dotHands.classList.toggle("on", state.modules.hands);
-
   log(`${mod} ${state.modules[mod] ? "ON" : "OFF"}.`);
 }
 
@@ -151,7 +164,6 @@ function clearAll() {
   gestureChip.textContent = "— gesture";
   poseChip.textContent    = "— pose";
   personChip.textContent  = "— person";
-  log("Display cleared.");
 }
 
 // ── Face Enrollment ───────────────────────────────────────────────────────
@@ -159,41 +171,32 @@ async function enrollFace() {
   const name = document.getElementById("enrollName").value.trim();
   if (!name) return log("Enter a name first.", "warn");
   if (!state.modelsLoaded) return log("Models not loaded yet.", "warn");
-
   try {
-    const det = await faceapi
-      .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
-      .withFaceLandmarks()
-      .withFaceDescriptor();
-    if (!det) return log("No face detected for enrollment.", "warn");
-
+    const det = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+      .withFaceLandmarks().withFaceDescriptor();
+    if (!det) return log("No face detected.", "warn");
     const descriptor = Array.from(det.descriptor);
     state.knownFaces.push({ name, descriptor: new Float32Array(descriptor) });
-
-    await fetch("/api/faces", {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ name, descriptor }),
+    await fetch(MCP_BASE + "/api/faces", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, descriptor }),
     });
     log(`Face enrolled: ${name}`, "info");
-  } catch (e) {
-    log("Enrollment error: " + e.message, "error");
-  }
+  } catch (e) { log("Enrollment error: " + e.message, "error"); }
 }
 
 async function forgetFace() {
   const name = document.getElementById("enrollName").value.trim();
   if (!name) return log("Enter a name to forget.", "warn");
   state.knownFaces = state.knownFaces.filter(f => f.name !== name);
-  try { await fetch(`/api/faces/${encodeURIComponent(name)}`, { method: "DELETE" }); } catch {}
+  try { await fetch(MCP_BASE + `/api/faces/${encodeURIComponent(name)}`, { method: "DELETE" }); } catch {}
   log(`Forgot face: ${name}`);
 }
 
 // ── Snapshot ──────────────────────────────────────────────────────────────
 function captureSnapshot() {
   const snap = document.createElement("canvas");
-  snap.width  = video.videoWidth;
-  snap.height = video.videoHeight;
+  snap.width = video.videoWidth; snap.height = video.videoHeight;
   snap.getContext("2d").drawImage(video, 0, 0);
   const dataURL = snap.toDataURL("image/png");
   state.snapshots.push({ ts: Date.now(), data: dataURL });
@@ -202,134 +205,293 @@ function captureSnapshot() {
 
 function downloadSnapshots() {
   state.snapshots.forEach((s, i) => {
-    const a    = document.createElement("a");
-    a.href     = s.data;
-    a.download = `unreal_snap_${i + 1}.png`;
-    a.click();
+    const a = document.createElement("a");
+    a.href = s.data; a.download = `unreal_snap_${i+1}.png`; a.click();
   });
 }
 
 function exportData() {
   const logs = Array.from(document.getElementById("log").children).map(l => l.textContent).join("\n");
-  const a    = document.createElement("a");
-  a.href     = URL.createObjectURL(new Blob([logs], { type: "text/plain" }));
-  a.download = "unreal_log.txt";
-  a.click();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([logs], { type: "text/plain" }));
+  a.download = "unreal_log.txt"; a.click();
 }
 
-// ── TTS — speechSynthesis ─────────────────────────────────────────────────
+// ── TTS ───────────────────────────────────────────────────────────────────
 function speak(text) {
-  if (!text || state.speaking) return;
+  if (!text) return;
   window.speechSynthesis.cancel();
-  const utt   = new SpeechSynthesisUtterance(text);
-  utt.lang    = "en-IN";
-  utt.rate    = 1.08;
-  utt.pitch   = 1.0;
-  // Prefer a local Indian-English voice if available
+  const utt = new SpeechSynthesisUtterance(text);
+  utt.lang = "en-IN"; utt.rate = 1.05; utt.pitch = 1.0;
   const voices = window.speechSynthesis.getVoices();
-  const pref   = voices.find(v => v.lang === "en-IN") ||
-                 voices.find(v => v.lang.startsWith("en"));
+  const pref = voices.find(v => v.lang === "en-IN") || voices.find(v => v.lang.startsWith("en"));
   if (pref) utt.voice = pref;
-
   state.speaking = true;
   utt.onend = utt.onerror = () => { state.speaking = false; };
   window.speechSynthesis.speak(utt);
-  log(`UNREAL: "${text.slice(0, 80)}${text.length > 80 ? "…" : ""}"`, "info");
+  log(`UNREAL: "${text.slice(0, 90)}${text.length > 90 ? "…" : ""}"`, "info");
 }
 
-// ── Gemini API ────────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are UNREAL — the most advanced AI system ever built.
-You combine real-time computer vision, full voice pipeline, and complete automation.
-Personality: calm, sharp, occasionally dry. Trusted operator — not a chatbot.
-Tone: "On it, boss." Not: "I will now proceed to execute your request."
+// ══════════════════════════════════════════════════════════════════════════
+// ── ACTION ENGINE — actually executes commands like a real assistant ──────
+// ══════════════════════════════════════════════════════════════════════════
+
+function executeAction(cmd) {
+  const c = cmd.toLowerCase().trim();
+
+  // ── YouTube Music / Spotify / Music ──────────────────────────────────
+  if (c.includes("play") && (c.includes("youtube music") || c.includes("yt music"))) {
+    const query = c.replace(/play|on youtube music|on yt music/gi, "").trim();
+    window.open(`https://music.youtube.com/search?q=${encodeURIComponent(query)}`, "_blank");
+    return `Searching YouTube Music for "${query}", boss.`;
+  }
+  if (c.includes("play") && c.includes("spotify")) {
+    const query = c.replace(/play|on spotify/gi, "").trim();
+    window.open(`https://open.spotify.com/search/${encodeURIComponent(query)}`, "_blank");
+    return `Opening Spotify for "${query}", boss.`;
+  }
+  if (c.includes("play") && (c.includes("youtube") || c.includes("video"))) {
+    const query = c.replace(/play|on youtube|video/gi, "").trim();
+    window.open(`https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`, "_blank");
+    return `Searching YouTube for "${query}", boss.`;
+  }
+  if (c.match(/^play\s+.+/) && !c.includes("open")) {
+    const query = c.replace(/^play\s+/, "").trim();
+    window.open(`https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`, "_blank");
+    return `Searching YouTube for "${query}", boss.`;
+  }
+
+  // ── Open apps / websites ──────────────────────────────────────────────
+  const appMap = {
+    "youtube":       "https://www.youtube.com",
+    "youtube music": "https://music.youtube.com",
+    "instagram":     "https://www.instagram.com",
+    "facebook":      "https://www.facebook.com",
+    "twitter":       "https://www.twitter.com",
+    "x":             "https://www.x.com",
+    "whatsapp":      "https://web.whatsapp.com",
+    "telegram":      "https://web.telegram.org",
+    "gmail":         "https://mail.google.com",
+    "google mail":   "https://mail.google.com",
+    "google maps":   "https://maps.google.com",
+    "maps":          "https://maps.google.com",
+    "google":        "https://www.google.com",
+    "amazon":        "https://www.amazon.in",
+    "flipkart":      "https://www.flipkart.com",
+    "netflix":       "https://www.netflix.com",
+    "github":        "https://www.github.com",
+    "reddit":        "https://www.reddit.com",
+    "spotify":       "https://open.spotify.com",
+    "wikipedia":     "https://www.wikipedia.org",
+    "chatgpt":       "https://chat.openai.com",
+    "calculator":    "https://www.google.com/search?q=calculator",
+    "weather":       "https://www.google.com/search?q=weather+today",
+    "news":          "https://news.google.com",
+    "translate":     "https://translate.google.com",
+    "drive":         "https://drive.google.com",
+    "docs":          "https://docs.google.com",
+    "sheets":        "https://sheets.google.com",
+    "meet":          "https://meet.google.com",
+    "zoom":          "https://zoom.us",
+  };
+  if (c.startsWith("open ") || c.startsWith("launch ") || c.startsWith("go to ")) {
+    const target = c.replace(/^(open|launch|go to)\s+/, "").trim();
+    for (const [key, url] of Object.entries(appMap)) {
+      if (target.includes(key)) {
+        window.open(url, "_blank");
+        return `Opening ${key}, boss.`;
+      }
+    }
+    // Generic URL or search
+    if (target.includes(".com") || target.includes(".in") || target.includes(".org")) {
+      window.open(`https://${target.replace(/^https?:\/\//, "")}`, "_blank");
+      return `Opening ${target}, boss.`;
+    }
+    window.open(`https://www.google.com/search?q=${encodeURIComponent(target)}`, "_blank");
+    return `Searching for ${target}, boss.`;
+  }
+
+  // ── Search ────────────────────────────────────────────────────────────
+  if (c.startsWith("search ") || c.startsWith("google ") || c.startsWith("look up ")) {
+    const query = c.replace(/^(search|google|look up)\s+/, "").trim();
+    window.open(`https://www.google.com/search?q=${encodeURIComponent(query)}`, "_blank");
+    return `Searching for "${query}", boss.`;
+  }
+  if (c.startsWith("search youtube ") || c.startsWith("youtube search ")) {
+    const query = c.replace(/^(search youtube|youtube search)\s+/, "").trim();
+    window.open(`https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`, "_blank");
+    return `Searching YouTube for "${query}", boss.`;
+  }
+
+  // ── WhatsApp ──────────────────────────────────────────────────────────
+  if (c.includes("whatsapp") && (c.includes("send") || c.includes("message"))) {
+    window.open("https://web.whatsapp.com", "_blank");
+    return "Opening WhatsApp Web. You can send the message from there, boss.";
+  }
+  if (c.includes("whatsapp") && c.includes("call")) {
+    window.open("https://web.whatsapp.com", "_blank");
+    return "Opening WhatsApp Web for the call, boss.";
+  }
+
+  // ── Maps / Navigation ─────────────────────────────────────────────────
+  if (c.includes("navigate to") || c.includes("directions to") || c.includes("take me to")) {
+    const dest = c.replace(/navigate to|directions to|take me to/gi, "").trim();
+    window.open(`https://maps.google.com/maps?q=${encodeURIComponent(dest)}`, "_blank");
+    return `Opening navigation to ${dest}, boss.`;
+  }
+  if (c.includes("weather")) {
+    const loc = c.replace(/weather|in|at|for|today|tomorrow/gi, "").trim();
+    window.open(`https://www.google.com/search?q=weather+${encodeURIComponent(loc || "today")}`, "_blank");
+    return `Pulling up weather${loc ? " for " + loc : ""}, boss.`;
+  }
+
+  // ── Timer / Alarm ─────────────────────────────────────────────────────
+  const timerMatch = c.match(/set\s+(?:a\s+)?(?:timer|alarm)\s+(?:for\s+)?(\d+)\s*(second|minute|hour|min|sec|hr)/i);
+  if (timerMatch) {
+    const num = parseInt(timerMatch[1]);
+    const unit = timerMatch[2].toLowerCase();
+    let ms = num * 1000;
+    if (unit.startsWith("min")) ms = num * 60000;
+    if (unit.startsWith("hour") || unit === "hr") ms = num * 3600000;
+    const label = `${num} ${unit}${num !== 1 ? "s" : ""}`;
+    setTimeout(() => {
+      speak(`Timer done, boss. ${label} is up.`);
+      log(`⏰ Timer: ${label} complete.`, "warn");
+    }, ms);
+    return `Timer set for ${label}, boss.`;
+  }
+
+  // ── Time / Date ───────────────────────────────────────────────────────
+  if (c.includes("what time") || c.includes("current time") || c === "time") {
+    const t = new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+    return `It's ${t}, boss.`;
+  }
+  if (c.includes("what date") || c.includes("today's date") || c === "date") {
+    const d = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    return `Today is ${d}, boss.`;
+  }
+
+  // ── Screenshot / Snapshot ─────────────────────────────────────────────
+  if (c.includes("screenshot") || c.includes("capture") || c.includes("snapshot")) {
+    captureSnapshot();
+    return "Snapshot captured, boss.";
+  }
+
+  // ── Vision toggles via voice ──────────────────────────────────────────
+  if (c.includes("face detection") || c.includes("start face")) { toggleModule("face"); return "Face detection toggled, boss."; }
+  if (c.includes("recognize") || c.includes("who is this"))     { toggleModule("recog"); return "Face recognition toggled, boss."; }
+  if (c.includes("emotion"))                                     { toggleModule("emotion"); return "Emotion detection toggled, boss."; }
+  if (c.includes("age") && c.includes("gender"))                 { toggleModule("agegend"); return "Age and gender toggled, boss."; }
+  if (c.includes("pose") || c.includes("body tracking"))         { toggleModule("pose"); return "Pose tracking toggled, boss."; }
+  if (c.includes("hand tracking") || c.includes("track hands"))  { toggleModule("hands"); return "Hand tracking toggled, boss."; }
+  if (c.includes("stop all"))  { stopAll(); return "All modules stopped, boss."; }
+  if (c.includes("pause"))     { state.paused = true; return "Paused, boss."; }
+  if (c.includes("resume"))    { state.paused = false; return "Resumed, boss."; }
+
+  const saveMatch = c.match(/save face as (.+)/);
+  if (saveMatch) { document.getElementById("enrollName").value = saveMatch[1]; enrollFace(); return `Saving face as ${saveMatch[1]}, boss.`; }
+  const forgetMatch = c.match(/forget (.+)/);
+  if (forgetMatch) { document.getElementById("enrollName").value = forgetMatch[1]; forgetFace(); return `Forgot ${forgetMatch[1]}, boss.`; }
+
+  // ── Translate ─────────────────────────────────────────────────────────
+  if (c.startsWith("translate ")) {
+    const query = c.replace(/^translate\s+/, "");
+    window.open(`https://translate.google.com/?text=${encodeURIComponent(query)}`, "_blank");
+    return `Opening translation for "${query}", boss.`;
+  }
+
+  // ── News ──────────────────────────────────────────────────────────────
+  if (c.includes("news") || c.includes("headlines")) {
+    window.open("https://news.google.com", "_blank");
+    return "Opening Google News, boss.";
+  }
+
+  return null; // nothing matched — send to Groq
+}
+
+// ── Main command router ───────────────────────────────────────────────────
+async function handleCommand(cmd) {
+  if (!cmd.trim()) return;
+  addChatBubble(cmd, "user");
+
+  const actionResult = executeAction(cmd);
+  if (actionResult) {
+    speak(actionResult);
+    addChatBubble(actionResult, "ai");
+    return;
+  }
+
+  // Fall through to Groq AI for everything else
+  await askGroq(cmd);
+}
+
+// ── Groq AI ───────────────────────────────────────────────────────────────
+const SYSTEM_PROMPT = `You are UNREAL — the most advanced AI assistant.
+You combine real-time computer vision, voice, and automation.
+Personality: calm, sharp, trusted operator. Like Jarvis.
+Tone: concise. "On it, boss." Not "I will now proceed to execute your request."
 Rules:
-1. Keep spoken responses to 2-4 sentences max.
-2. No bullet points or markdown in your reply — plain spoken sentences only.
-3. If you don't know something, say so briefly.
-Greeting: If this is the first message, start with "UNREAL online. What do you need, boss?"`;
+1. Keep spoken responses to 1-3 sentences. Plain spoken sentences only.
+2. No bullet points, no markdown, no asterisks in your reply.
+3. If asked to open an app or play something, say you're doing it (the system handles the actual action).
+4. Greeting on first message: "UNREAL online. What do you need, boss?"`;
 
 async function askGroq(userText) {
   const GROQ_API_KEY = getGroqKey();
   if (!GROQ_API_KEY) {
-    speak("No API key configured, boss. Add GROQ_API_KEY to config dot js.");
-    return;
+    const msg = "No API key configured, boss. Add your GROQ_API_KEY to config dot js.";
+    speak(msg); addChatBubble(msg, "ai"); return;
   }
 
-  // Build conversation history in OpenAI format (Groq is OpenAI-compatible)
-  state.chatHistory.push({ role: "user", content: userText });
+  // Show typing indicator
+  const feed = document.getElementById("chat-feed");
+  const typing = document.createElement("div");
+  typing.className = "chat-row ai typing-row";
+  typing.innerHTML = '<div class="bubble typing"><span></span><span></span><span></span></div>';
+  if (feed) feed.appendChild(typing);
 
-  const messages = [
-    { role: "system", content: SYSTEM_PROMPT },
-    ...state.chatHistory,
-  ];
+  state.chatHistory.push({ role: "user", content: userText });
+  const messages = [{ role: "system", content: SYSTEM_PROMPT }, ...state.chatHistory];
 
   try {
     const res  = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${GROQ_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: GROQ_MODEL,
-        messages,
-        max_tokens: 200,
-        temperature: 0.7,
-      }),
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${GROQ_API_KEY}` },
+      body: JSON.stringify({ model: GROQ_MODEL, messages, max_tokens: 150, temperature: 0.7 }),
     });
     const data = await res.json();
+    if (typing.parentNode) typing.parentNode.removeChild(typing);
 
     if (data.error) {
-      log("Groq error: " + data.error.message, "error");
-      speak("Something went wrong on my end, boss.");
-      state.chatHistory.pop();
-      return;
+      const msg = "API error: " + data.error.message;
+      log(msg, "error"); speak("Something went wrong, boss."); addChatBubble(msg, "ai");
+      state.chatHistory.pop(); return;
     }
 
-    const reply = data.choices?.[0]?.message?.content || "…";
+    const reply = data.choices?.[0]?.message?.content?.trim() || "…";
     state.chatHistory.push({ role: "assistant", content: reply });
-
-    // Keep history manageable — last 20 turns
     if (state.chatHistory.length > 20) state.chatHistory.splice(0, 2);
-
     speak(reply);
+    addChatBubble(reply, "ai");
   } catch (e) {
+    if (typing.parentNode) typing.parentNode.removeChild(typing);
     log("Groq fetch error: " + e.message, "error");
-    speak("Network issue, boss. Check your connection.");
+    speak("Network issue, boss."); addChatBubble("Network issue, boss.", "ai");
     state.chatHistory.pop();
   }
 }
 
-// ── Vision command shortcuts (no need to hit Gemini for these) ────────────
-function tryLocalCommand(cmd) {
-  if (cmd.includes("start face") || cmd.includes("face detection")) { toggleModule("face"); return true; }
-  if (cmd.includes("recognize") || cmd.includes("who is this"))     { toggleModule("recog"); return true; }
-  if (cmd.includes("emotion"))                                        { toggleModule("emotion"); return true; }
-  if (cmd.includes("age") || cmd.includes("gender"))                 { toggleModule("agegend"); return true; }
-  if (cmd.includes("pose") || cmd.includes("body"))                  { toggleModule("pose"); return true; }
-  if (cmd.includes("track hands") || cmd.includes("hand track"))     { toggleModule("hands"); return true; }
-  if (cmd.includes("capture") || cmd.includes("snapshot"))           { captureSnapshot(); return true; }
-  if (cmd.includes("stop all"))                                       { stopAll(); return true; }
-  if (cmd.includes("pause") || cmd.includes("resume"))               { state.paused = !state.paused; log(state.paused ? "Paused." : "Resumed."); return true; }
-  if (cmd.includes("clear"))                                          { clearAll(); return true; }
-  if (cmd.includes("download") || cmd.includes("export"))            { downloadSnapshots(); return true; }
-  const saveMatch = cmd.match(/save face as (.+)/);
-  if (saveMatch) { document.getElementById("enrollName").value = saveMatch[1]; enrollFace(); return true; }
-  const forgetMatch = cmd.match(/forget (.+)/);
-  if (forgetMatch) { document.getElementById("enrollName").value = forgetMatch[1]; forgetFace(); return true; }
-  return false;
+// ── Text command ──────────────────────────────────────────────────────────
+function sendCommand() {
+  const input = document.getElementById("cmdInput");
+  const cmd = input.value.trim();
+  if (!cmd) return;
+  log(`Command: "${cmd}"`, "user");
+  handleCommand(cmd);
+  input.value = "";
 }
 
-// ── Main command router ───────────────────────────────────────────────────
-function handleCommand(cmd) {
-  const lower = cmd.toLowerCase().trim();
-  if (!tryLocalCommand(lower)) {
-    // Everything else → Gemini
-    askGroq(cmd);
-  }
-}
-
-// ── Voice Control (Web Speech API) ───────────────────────────────────────
+// ── Voice (Web Speech API) ────────────────────────────────────────────────
 let recognition = null;
 
 function toggleVoice() {
@@ -354,11 +516,14 @@ function toggleVoice() {
   recognition.onresult = e => {
     const transcript = e.results[e.results.length - 1][0].transcript.trim();
     log(`Voice: "${transcript}"`, "user");
-    // Don't process while UNREAL is speaking
     if (!state.speaking) handleCommand(transcript);
   };
-  recognition.onerror = e => log("Speech error: " + e.error, "error");
-  recognition.onend   = () => { if (state.voiceOn) recognition.start(); };
+  recognition.onerror = e => {
+    log("Speech error: " + e.error, "error");
+    // Auto-restart on non-fatal errors
+    if (e.error === "no-speech" && state.voiceOn) setTimeout(() => { try { recognition.start(); } catch {} }, 300);
+  };
+  recognition.onend = () => { if (state.voiceOn) { try { recognition.start(); } catch {} } };
 
   recognition.start();
   state.voiceOn = true;
@@ -366,31 +531,16 @@ function toggleVoice() {
   document.getElementById("voiceBtn").classList.add("recording");
   log("Voice ON — listening…");
 
-  // Greet on first activation
   if (state.chatHistory.length === 0) {
-    askGroq("(system: first activation — greet the user)");
+    askGroq("(system: first activation — greet the user in one short sentence)");
   }
-}
-
-// ── Text command ──────────────────────────────────────────────────────────
-function sendCommand() {
-  const cmd = document.getElementById("cmdInput").value.trim();
-  if (!cmd) return;
-  log(`Command: "${cmd}"`, "user");
-  handleCommand(cmd);
-  document.getElementById("cmdInput").value = "";
 }
 
 // ── Gesture Detection ─────────────────────────────────────────────────────
 function detectGesture(landmarks) {
-  const tip   = i => landmarks[i];
-  const up    = i => tip(i).y < tip(i - 2).y;
-
-  const index  = up(8);
-  const middle = up(12);
-  const ring   = up(16);
-  const pinky  = up(20);
-
+  const tip = i => landmarks[i];
+  const up  = i => tip(i).y < tip(i - 2).y;
+  const index = up(8), middle = up(12), ring = up(16), pinky = up(20);
   const thumbUp   = tip(4).y < tip(2).y && !index && !middle && !ring && !pinky;
   const thumbDown = tip(4).y > tip(2).y && !index && !middle && !ring && !pinky;
   const peace     = index && middle && !ring && !pinky;
@@ -399,7 +549,6 @@ function detectGesture(landmarks) {
   const point     = index && !middle && !ring && !pinky;
   const callMe    = index && !middle && !ring && pinky;
   const pinchGes  = tip(4).y > tip(8).y - 0.04 && tip(4).y < tip(8).y + 0.04 && !middle && !ring && !pinky;
-
   if (thumbUp)   return "thumbs_up";
   if (thumbDown) return "thumbs_down";
   if (peace)     return "peace";
@@ -417,10 +566,8 @@ function handleGesture(gesture) {
   if (now - state.gestureDebounce < 1500) return;
   state.gestureDebounce = now;
   state.lastGesture = gesture;
-
   gestureChip.textContent = gesture.replace("_", " ");
   log(`Gesture: ${gesture}`, "info");
-
   switch (gesture) {
     case "peace":      toggleModule("face"); break;
     case "thumbs_up":  toggleModule("recog"); break;
@@ -433,7 +580,7 @@ function handleGesture(gesture) {
   }
 }
 
-// ── MediaPipe setup ───────────────────────────────────────────────────────
+// ── MediaPipe ─────────────────────────────────────────────────────────────
 let faceMesh, handsMP, poseMP;
 
 function setupMediaPipe() {
@@ -476,80 +623,63 @@ function onHandsResults(results) {
 function onPoseResults(results) {
   if (!results.poseLandmarks || !state.modules.pose) return;
   drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS, { color: "rgba(255,170,0,0.6)", lineWidth: 2 });
-  drawLandmarks(ctx,  results.poseLandmarks, { color: "#ffaa00", lineWidth: 1, radius: 3 });
+  drawLandmarks(ctx, results.poseLandmarks, { color: "#ffaa00", lineWidth: 1, radius: 3 });
   poseChip.textContent = "pose active";
 }
 
-// ── face-api.js analysis loop ─────────────────────────────────────────────
+// ── face-api loop ─────────────────────────────────────────────────────────
 async function runFaceApi() {
   if (!state.modelsLoaded || state.paused) return;
   const anyFaceMode = state.modules.face || state.modules.recog || state.modules.emotion || state.modules.agegend;
   if (!anyFaceMode) return;
-
   try {
     const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 320 });
-    let task   = faceapi.detectAllFaces(video, opts).withFaceLandmarks();
-
-    if (state.modules.recog || state.modules.emotion || state.modules.agegend) {
+    let task = faceapi.detectAllFaces(video, opts).withFaceLandmarks();
+    if (state.modules.recog || state.modules.emotion || state.modules.agegend)
       task = task.withFaceDescriptors().withFaceExpressions().withAgeAndGender();
-    }
-
     const detections = await task;
     if (!detections.length) return;
-
-    const dims    = { width: video.videoWidth, height: video.videoHeight };
+    const dims = { width: video.videoWidth, height: video.videoHeight };
     const resized = faceapi.resizeResults(detections, dims);
-
     resized.forEach(det => {
       const { box } = det.detection;
-
       if (state.modules.face) {
-        ctx.strokeStyle = "#00ffc8";
-        ctx.lineWidth   = 1.5;
+        ctx.strokeStyle = "#00ffc8"; ctx.lineWidth = 1.5;
         ctx.strokeRect(box.x, box.y, box.width, box.height);
       }
-
       if (state.modules.recog && det.descriptor && state.knownFaces.length) {
         const matcher = new faceapi.FaceMatcher(
           state.knownFaces.map(f => new faceapi.LabeledFaceDescriptors(f.name, [f.descriptor]))
         );
         const match = matcher.findBestMatch(det.descriptor);
-        const label = match.label !== "unknown" ? `${match.label} (${(1 - match.distance).toFixed(0) * 100 | 0}%)` : "unknown";
+        const label = match.label !== "unknown" ? `${match.label} (${Math.round((1 - match.distance) * 100)}%)` : "unknown";
         personChip.textContent = label;
-        ctx.fillStyle = "#00ffc8";
-        ctx.font      = "12px monospace";
+        ctx.fillStyle = "#00ffc8"; ctx.font = "12px monospace";
         ctx.fillText(label, box.x, box.y - 6);
       }
-
       if (state.modules.emotion && det.expressions) {
         const top = Object.entries(det.expressions).sort((a, b) => b[1] - a[1])[0];
         emotionChip.textContent = `${top[0]} ${(top[1] * 100).toFixed(0)}%`;
       }
-
       if (state.modules.agegend && det.age != null) {
         const tag = `${det.gender} ~${Math.round(det.age)}y`;
-        ctx.fillStyle = "#7b5ea7";
-        ctx.font      = "11px monospace";
+        ctx.fillStyle = "#7b5ea7"; ctx.font = "11px monospace";
         ctx.fillText(tag, box.x, box.y + box.height + 14);
       }
     });
   } catch {}
 }
 
-// ── Main render loop ──────────────────────────────────────────────────────
+// ── Render loop ───────────────────────────────────────────────────────────
 async function renderLoop() {
   if (!state.paused && video.readyState === 4) {
     canvas.width  = video.videoWidth;
     canvas.height = video.videoHeight;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-
     if (state.modules.face || state.modules.recog || state.modules.emotion || state.modules.agegend)
       await faceMesh?.send({ image: video });
-    if (state.modules.hands)
-      await handsMP?.send({ image: video });
-    if (state.modules.pose)
-      await poseMP?.send({ image: video });
-
+    if (state.modules.hands) await handsMP?.send({ image: video });
+    if (state.modules.pose)  await poseMP?.send({ image: video });
     await runFaceApi();
   }
   requestAnimationFrame(renderLoop);
@@ -562,10 +692,7 @@ async function renderLoop() {
   await startCamera();
   setupMediaPipe();
   const poll = setInterval(() => {
-    if (typeof faceapi !== "undefined") {
-      clearInterval(poll);
-      loadModels();
-    }
+    if (typeof faceapi !== "undefined") { clearInterval(poll); loadModels(); }
   }, 500);
   renderLoop();
   log("System ready. All modules standby.", "info");
