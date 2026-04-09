@@ -1,0 +1,31 @@
+# UNREAL — Render Blueprint
+# 2 services: Node (face API) + Python (MCP tools)
+# Voice is handled by the browser — no worker needed.
+
+services:
+
+  # ── 1. Node.js Face API (Web Service) ────────────────────────────────────
+  - type: web
+    name: unreal-node
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: MONGODB_URI
+        sync: false   # fill in Render dashboard
+      - key: GOOGLE_API_KEY
+        sync: false   # needed for /api/config endpoint
+
+  # ── 2. Python MCP Tool Server (Web Service) ───────────────────────────────
+  - type: web
+    name: unreal-mcp
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server.py
+    envVars:
+      - key: GOOGLE_API_KEY
+        sync: false
