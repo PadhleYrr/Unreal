@@ -1,0 +1,11 @@
+{
+  "appId": "com.unreal.ai",
+  "appName": "UNREAL",
+  "webDir": ".",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}
