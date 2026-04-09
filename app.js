@@ -56,10 +56,11 @@ function log(msg, type = "info") {
 
 // ── Validate config ───────────────────────────────────────────────────────
 function checkConfig() {
-  if (!GEMINI_API_KEY || GEMINI_API_KEY === "your_google_api_key_here") {
-    log("Open config.js and add your GOOGLE_API_KEY.", "warn");
+  if (!GEMINI_API_KEY || GEMINI_API_KEY === "your_google_api_key_here" || GEMINI_API_KEY.trim() === "") {
+    log("⚠ Open config.js and paste your GOOGLE_API_KEY to enable voice AI.", "warn");
+    speak("Add your Google API key to config dot js to enable voice.");
   } else {
-    log("Gemini ready.", "info");
+    log("Gemini ready ✓", "info");
   }
 }
 
@@ -79,7 +80,7 @@ async function startCamera() {
 }
 
 // ── face-api.js models ────────────────────────────────────────────────────
-const MODEL_URL = "https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights";
+const MODEL_URL = "https://vladmandic.github.io/face-api/model";
 
 async function loadModels() {
   log("Loading vision models…", "warn");
