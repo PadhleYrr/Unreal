@@ -7,9 +7,9 @@
 
 // ── Config ────────────────────────────────────────────────────────────────
 // Keys are read from config.js (UNREAL_CONFIG). Fill that file in — no server needed.
-let GEMINI_API_KEY = (typeof UNREAL_CONFIG !== "undefined") ? UNREAL_CONFIG.GOOGLE_API_KEY : "";
-const GEMINI_MODEL = "gemini-2.0-flash";
-const MCP_BASE     = (typeof UNREAL_CONFIG !== "undefined" && UNREAL_CONFIG.RENDER_NODE_URL)
+let GROQ_API_KEY  = (typeof UNREAL_CONFIG !== "undefined") ? UNREAL_CONFIG.GROQ_API_KEY : "";
+const GROQ_MODEL  = "llama-3.3-70b-versatile";
+const MCP_BASE    = (typeof UNREAL_CONFIG !== "undefined" && UNREAL_CONFIG.RENDER_NODE_URL)
   ? UNREAL_CONFIG.RENDER_NODE_URL
   : (window.location.hostname === "localhost" ? "http://localhost:3000" : "");
 
@@ -56,11 +56,10 @@ function log(msg, type = "info") {
 
 // ── Validate config ───────────────────────────────────────────────────────
 function checkConfig() {
-  if (!GEMINI_API_KEY || GEMINI_API_KEY === "your_google_api_key_here" || GEMINI_API_KEY.trim() === "") {
-    log("⚠ Open config.js and paste your GOOGLE_API_KEY to enable voice AI.", "warn");
-    speak("Add your Google API key to config dot js to enable voice.");
+  if (!GROQ_API_KEY || GROQ_API_KEY === "your_groq_api_key_here" || GROQ_API_KEY.trim() === "") {
+    log("⚠ Open config.js and paste your GROQ_API_KEY to enable voice AI.", "warn");
   } else {
-    log("Gemini ready ✓", "info");
+    log("Groq ready ✓", "info");
   }
 }
 
@@ -242,44 +241,52 @@ Rules:
 3. If you don't know something, say so briefly.
 Greeting: If this is the first message, start with "UNREAL online. What do you need, boss?"`;
 
-async function askGemini(userText) {
-  if (!GEMINI_API_KEY) {
-    speak("No API key configured, boss. Add GOOGLE_API_KEY to your environment.");
+async function askGroq(userText) {
+  if (!GROQ_API_KEY || GROQ_API_KEY === "your_groq_api_key_here") {
+    speak("No API key configured, boss. Add GROQ_API_KEY to config dot js.");
     return;
   }
 
-  // Build conversation history
-  state.chatHistory.push({ role: "user", parts: [{ text: userText }] });
+  // Build conversation history in OpenAI format (Groq is OpenAI-compatible)
+  state.chatHistory.push({ role: "user", content: userText });
 
-  const body = {
-    system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-    contents: state.chatHistory,
-    generationConfig: { maxOutputTokens: 200, temperature: 0.7 },
-  };
+  const messages = [
+    { role: "system", content: SYSTEM_PROMPT },
+    ...state.chatHistory,
+  ];
 
   try {
-    const res  = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
-    );
+    const res  = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: GROQ_MODEL,
+        messages,
+        max_tokens: 200,
+        temperature: 0.7,
+      }),
+    });
     const data = await res.json();
 
     if (data.error) {
-      log("Gemini error: " + data.error.message, "error");
+      log("Groq error: " + data.error.message, "error");
       speak("Something went wrong on my end, boss.");
-      state.chatHistory.pop(); // remove failed user turn
+      state.chatHistory.pop();
       return;
     }
 
-    const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "…";
-    state.chatHistory.push({ role: "model", parts: [{ text: reply }] });
+    const reply = data.choices?.[0]?.message?.content || "…";
+    state.chatHistory.push({ role: "assistant", content: reply });
 
     // Keep history manageable — last 20 turns
     if (state.chatHistory.length > 20) state.chatHistory.splice(0, 2);
 
     speak(reply);
   } catch (e) {
-    log("Gemini fetch error: " + e.message, "error");
+    log("Groq fetch error: " + e.message, "error");
     speak("Network issue, boss. Check your connection.");
     state.chatHistory.pop();
   }
@@ -310,7 +317,7 @@ function handleCommand(cmd) {
   const lower = cmd.toLowerCase().trim();
   if (!tryLocalCommand(lower)) {
     // Everything else → Gemini
-    askGemini(cmd);
+    askGroq(cmd);
   }
 }
 
@@ -353,7 +360,7 @@ function toggleVoice() {
 
   // Greet on first activation
   if (state.chatHistory.length === 0) {
-    askGemini("(system: first activation — greet the user)");
+    askGroq("(system: first activation — greet the user)");
   }
 }
 
