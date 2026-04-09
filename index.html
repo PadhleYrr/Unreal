@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UNREAL — Ultimate AI System</title>
+
+  <!-- MediaPipe -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+
+  <!-- face-api.js -->
+  <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0f;
+      --surface: #111118;
+      --border: rgba(0, 255, 200, 0.15);
+      --accent: #00ffc8;
+      --accent2: #7b5ea7;
+      --text: #e0e0e0;
+      --muted: #666;
+      --danger: #ff4444;
+      --warn: #ffaa00;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Courier New', monospace;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .logo { font-size: 22px; font-weight: 700; letter-spacing: 4px; color: var(--accent); }
+    .logo span { color: var(--accent2); }
+    .status-bar { display: flex; gap: 16px; font-size: 11px; color: var(--muted); }
+    .status-dot {
+      display: inline-block; width: 7px; height: 7px;
+      border-radius: 50%; background: var(--muted);
+      margin-right: 5px; vertical-align: middle;
+    }
+    .status-dot.on { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+
+    /* ── Main layout ─────────────────────────────────────────────────── */
+    .main { display: grid; grid-template-columns: 1fr 320px; gap: 0; flex: 1; }
+
+    /* ── Video panel ─────────────────────────────────────────────────── */
+    .video-wrap {
+      position: relative;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 480px;
+    }
+    #videoEl {
+      width: 100%; max-height: 70vh;
+      object-fit: cover; display: block;
+      transform: scaleX(-1);
+    }
+    #canvasEl {
+      position: absolute; top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      transform: scaleX(-1);
+    }
+
+    /* Overlays */
+    .overlay-chip {
+      position: absolute;
+      background: rgba(0,0,0,0.75);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 12px;
+      color: var(--accent);
+    }
+    #emotion-chip  { top: 12px; left: 12px; }
+    #gesture-chip  { top: 12px; right: 12px; }
+    #pose-chip     { bottom: 12px; left: 12px; }
+    #person-chip   { bottom: 12px; right: 12px; }
+
+    /* ── Sidebar ─────────────────────────────────────────────────────── */
+    .sidebar {
+      border-left: 1px solid var(--border);
+      background: var(--surface);
+      display: flex; flex-direction: column;
+      overflow-y: auto;
+    }
+
+    .panel {
+      border-bottom: 1px solid var(--border);
+      padding: 14px 16px;
+    }
+    .panel-title {
+      font-size: 10px; letter-spacing: 2px;
+      color: var(--accent2); margin-bottom: 10px;
+      text-transform: uppercase;
+    }
+
+    /* Mode buttons */
+    .btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .mode-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 7px 4px;
+      border-radius: 6px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-family: inherit;
+    }
+    .mode-btn:hover  { border-color: var(--accent); color: var(--accent); }
+    .mode-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(0,255,200,0.08); }
+
+    /* Command input */
+    .cmd-wrap { display: flex; gap: 6px; }
+    #cmdInput {
+      flex: 1;
+      background: #0d0d14;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 7px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: inherit;
+      outline: none;
+    }
+    #cmdInput:focus { border-color: var(--accent); }
+    .icon-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--accent);
+      width: 34px; height: 34px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .icon-btn:hover { background: rgba(0,255,200,0.08); }
+    .icon-btn.recording { border-color: var(--danger); color: var(--danger); animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+
+    /* Log */
+    #log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px 16px;
+      font-size: 11px;
+      line-height: 1.7;
+      color: var(--muted);
+      min-height: 160px;
+      max-height: 240px;
+    }
+    .log-line { margin-bottom: 2px; }
+    .log-line.info  { color: var(--accent); }
+    .log-line.warn  { color: var(--warn); }
+    .log-line.error { color: var(--danger); }
+    .log-line.user  { color: #aaa; }
+
+    /* Enroll */
+    #enrollName {
+      width: 100%; background: #0d0d14;
+      border: 1px solid var(--border);
+      color: var(--text); padding: 7px 10px;
+      border-radius: 6px; font-size: 12px;
+      font-family: inherit; outline: none;
+      margin-bottom: 6px;
+    }
+    .full-btn {
+      width: 100%; background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text); padding: 7px;
+      border-radius: 6px; font-size: 11px;
+      cursor: pointer; font-family: inherit;
+      transition: all 0.2s; margin-bottom: 4px;
+    }
+    .full-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .full-btn.accent { border-color: var(--accent2); color: var(--accent2); }
+
+    /* Gesture table */
+    .gesture-list { font-size: 11px; line-height: 2; color: var(--muted); }
+    .gesture-list span { color: var(--text); }
+
+    /* Bottom controls */
+    .bottom-bar {
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      padding: 10px 24px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .bottom-bar .mode-btn { flex: 1; padding: 9px; font-size: 12px; }
+
+    @media (max-width: 768px) {
+      .main { grid-template-columns: 1fr; }
+      .sidebar { border-left: none; border-top: 1px solid var(--border); }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ───────────────────────────────────────────────────────── -->
+<header>
+  <div class="logo">UN<span>REAL</span></div>
+  <div class="status-bar">
+    <span><span class="status-dot" id="dot-face"></span>Face</span>
+    <span><span class="status-dot" id="dot-pose"></span>Pose</span>
+    <span><span class="status-dot" id="dot-hands"></span>Hands</span>
+    <span><span class="status-dot" id="dot-voice"></span>Voice</span>
+    <span><span class="status-dot" id="dot-models"></span>Models</span>
+  </div>
+</header>
+
+<!-- ── Main ─────────────────────────────────────────────────────────── -->
+<div class="main">
+
+  <!-- Video -->
+  <div class="video-wrap">
+    <video id="videoEl" autoplay muted playsinline></video>
+    <canvas id="canvasEl"></canvas>
+    <div class="overlay-chip" id="emotion-chip">— emotion</div>
+    <div class="overlay-chip" id="gesture-chip">— gesture</div>
+    <div class="overlay-chip" id="pose-chip">— pose</div>
+    <div class="overlay-chip" id="person-chip">— person</div>
+  </div>
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+
+    <!-- Vision Modules -->
+    <div class="panel">
+      <div class="panel-title">Vision Modules</div>
+      <div class="btn-grid">
+        <button class="mode-btn" id="btn-face"    onclick="toggleModule('face')">Face Detection</button>
+        <button class="mode-btn" id="btn-recog"   onclick="toggleModule('recog')">Recognize</button>
+        <button class="mode-btn" id="btn-emotion" onclick="toggleModule('emotion')">Emotion</button>
+        <button class="mode-btn" id="btn-agegend" onclick="toggleModule('agegend')">Age / Gender</button>
+        <button class="mode-btn" id="btn-pose"    onclick="toggleModule('pose')">Pose Track</button>
+        <button class="mode-btn" id="btn-hands"   onclick="toggleModule('hands')">Hand Track</button>
+      </div>
+    </div>
+
+    <!-- Enroll Face -->
+    <div class="panel">
+      <div class="panel-title">Enroll Face</div>
+      <input id="enrollName" type="text" placeholder="Enter name…" />
+      <button class="full-btn" onclick="enrollFace()">Save Face</button>
+      <button class="full-btn accent" onclick="forgetFace()">Forget Face</button>
+    </div>
+
+    <!-- Command -->
+    <div class="panel">
+      <div class="panel-title">Command</div>
+      <div class="cmd-wrap">
+        <input id="cmdInput" type="text" placeholder="Type a command…" onkeydown="if(event.key==='Enter')sendCommand()" />
+        <button class="icon-btn" id="voiceBtn" onclick="toggleVoice()" title="Voice input">🎤</button>
+        <button class="icon-btn" onclick="captureSnapshot()" title="Snapshot">📸</button>
+      </div>
+    </div>
+
+    <!-- Log -->
+    <div id="log"><div class="log-line info">UNREAL system online.</div></div>
+
+    <!-- Gesture Reference -->
+    <div class="panel">
+      <div class="panel-title">Hand Gestures</div>
+      <div class="gesture-list">
+        ✌️ Peace → <span>Face Detection</span><br>
+        👍 Thumbs Up → <span>Recognize</span><br>
+        👎 Thumbs Down → <span>Stop All</span><br>
+        ✋ Open Palm → <span>Pause / Resume</span><br>
+        👊 Fist → <span>Clear All</span><br>
+        ☝️ Point → <span>Pose Module</span><br>
+        🤙 Call Me → <span>Toggle Voice</span><br>
+        🤏 Pinch → <span>Capture Snapshot</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── Bottom Bar ─────────────────────────────────────────────────────── -->
+<div class="bottom-bar">
+  <button class="mode-btn" onclick="stopAll()">Stop All</button>
+  <button class="mode-btn" onclick="clearAll()">Clear</button>
+  <button class="mode-btn" onclick="downloadSnapshots()">Download Snapshots</button>
+  <button class="mode-btn" onclick="exportData()">Export Log</button>
+</div>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
