@@ -410,8 +410,11 @@
     <span class="sdot"><span class="sdot-circle" id="dot-voice"></span>VOICE</span>
     <span class="sdot"><span class="sdot-circle" id="dot-models"></span>MODELS</span>
   </div>
-  <div class="header-right">
-    <span class="tag">v2.0</span>
+  <div class="header-right" style="display:flex;align-items:center;gap:10px;">
+    <span id="micStatusBadge" style="font-size:10px;letter-spacing:1.5px;color:#555568;font-family:'Space Mono',monospace;">🎙 OFF</span>
+    <button id="startBtn" onclick="startSystem()" style="background:var(--accent);border:none;color:#070710;padding:6px 18px;border-radius:5px;font-size:11px;font-family:'Space Mono',monospace;font-weight:700;letter-spacing:1px;cursor:pointer;">▶ START</button>
+    <button id="stopBtn"  onclick="stopSystem()"  style="display:none;background:var(--danger);border:none;color:#fff;padding:6px 18px;border-radius:5px;font-size:11px;font-family:'Space Mono',monospace;font-weight:700;letter-spacing:1px;cursor:pointer;">■ STOP</button>
+    <span class="tag">v3.0</span>
   </div>
 </header>
 
@@ -438,8 +441,7 @@
 
     <!-- Command bar -->
     <div class="cmd-bar">
-      <button class="cmd-btn" id="voiceBtn" onclick="toggleVoice()" title="Voice">🎤</button>
-      <input id="cmdInput" type="text" placeholder="Ask anything or give a command…"
+      <input id="cmdInput" type="text" placeholder="Type a command or question…"
              onkeydown="if(event.key==='Enter')sendCommand()" />
       <button class="cmd-btn send-btn" onclick="sendCommand()" title="Send">➤</button>
       <button class="cmd-btn" onclick="captureSnapshot()" title="Snapshot">📷</button>
@@ -476,6 +478,7 @@
         <button class="vbtn" id="btn-agegend" onclick="toggleModule('agegend')">Age/Gender</button>
         <button class="vbtn" id="btn-pose"    onclick="toggleModule('pose')">Pose Track</button>
         <button class="vbtn" id="btn-hands"   onclick="toggleModule('hands')">Hand Track</button>
+        <button class="vbtn" id="btn-screen"  onclick="toggleScreenShare()" style="grid-column:span 2;">📱 Share Screen</button>
       </div>
     </div>
 
