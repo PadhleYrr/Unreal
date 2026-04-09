@@ -1,0 +1,39 @@
+# Environment
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.uv/
+
+# Node
+node_modules/
+npm-debug.log
+
+# Android
+android/
+*.apk
+*.aab
+
+# Generated files
+programs/
+documents/
+temp_code.py
+photos/
+*.jpg
+*.png
+!icon.png
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
