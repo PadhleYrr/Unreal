@@ -7,7 +7,7 @@
 
 // ── Config ────────────────────────────────────────────────────────────────
 // Keys are read from config.js (UNREAL_CONFIG). Fill that file in — no server needed.
-let GROQ_API_KEY  = (typeof UNREAL_CONFIG !== "undefined") ? UNREAL_CONFIG.GROQ_API_KEY : "";
+let GROQ_API_KEY  = (typeof UNREAL_CONFIG !== "undefined") ? UNREAL_CONFIG.GROQ_API_KEY : "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";
 const GROQ_MODEL  = "llama-3.3-70b-versatile";
 const MCP_BASE    = (typeof UNREAL_CONFIG !== "undefined" && UNREAL_CONFIG.RENDER_NODE_URL)
   ? UNREAL_CONFIG.RENDER_NODE_URL
