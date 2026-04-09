@@ -1,0 +1,67 @@
+# UNREAL — Deploy Frontend to GitHub Pages
+# Triggers on every push to main
+# No secrets needed — GitHub Pages is free and automatic
+
+name: Deploy Frontend → GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Inject config.js from GitHub Secrets
+        run: |
+          cat > config.js << CONFIGEOF
+          const UNREAL_CONFIG = {
+            GOOGLE_API_KEY:  "${{ secrets.GOOGLE_API_KEY }}",
+            MONGODB_URI:     "${{ secrets.MONGODB_URI }}",
+            RENDER_NODE_URL: "${{ secrets.RENDER_NODE_URL }}",
+          };
+          CONFIGEOF
+
+      - name: Upload frontend files
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # Only upload frontend files — not Python/Node backend
+          path: |
+            .
+          exclude: |
+            unreal/
+            node_modules/
+            *.py
+            *.toml
+            requirements.txt
+            package*.json
+            render.yaml
+            .github/
+            programs/
+            documents/
+            photos/
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
